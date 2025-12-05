@@ -1,0 +1,209 @@
+apiVersion: labs.vriksh.cloud/v2
+kind: Lab
+
+metadata:
+  id: gitlab-ci-basics
+  slug: gitlab-ci-basics
+  title: "GitLab CI/CD Pipeline Fundamentals"
+  version: "2.0.0"
+  locale: "en-US"
+  labels:
+    domain: devops
+    product: gitlab
+    track: associate
+  owners:
+    - name: "Vriksh Cloud Core Team"
+      email: "labs@vriksh.cloud"
+      org: "Vriksh Cloud"
+      role: author
+  externalRefs:
+    certifications:
+      - "GitLab Certified Associate"
+    vendor_docs:
+      - "https://docs.gitlab.com/ee/ci/"
+
+spec:
+  classification:
+    domain: devops
+    subdomain: gitlab
+    difficulty: intermediate
+    modality: guided
+    scenario_type: single-tool
+    learning_objectives:
+      - Write and modify .gitlab-ci.yml files
+      - Understand runners and pipeline stages
+      - Fix failing pipeline jobs
+      - Trigger MR pipelines
+      - Validate pipeline configuration
+
+  experience:
+    estimated_duration_minutes: 60
+    max_session_minutes: 120
+    allow_retries: true
+    visible_in_catalog: true
+
+  prerequisites:
+    required_skills:
+      - Basic branching and MR process
+    required_labs:
+      - gitlab-branching-basics
+    required_providers:
+      - gitlab
+
+  parameters:
+    enabled: true
+    dynamic:
+      - name: suffix
+        type: string
+        generator: random_string
+        length: 4
+    injection_targets:
+      provider_configs: true
+      environment_variables: true
+
+  topology:
+    runtime_profiles:
+      default_profile: medium
+      profiles:
+        medium:
+          max_concurrent_sessions: 50
+          cost_multiplier: 1.3
+
+    providers:
+      - id: gitlab-main
+        type: gitlab
+        profile: medium
+        config:
+          image: "gitlab/gitlab-ee:latest"
+          cpu: 3
+          memory: "6Gi"
+          storage: "30Gi"
+          ingress:
+            enabled: true
+            public_endpoint: true
+          bootstrap_project:
+            enabled: true
+            template: "ci-basic"
+          admin_user:
+            username_template: "root-{{ suffix }}"
+            password_policy:
+              length: 20
+              charset: "alnum-symbol"
+
+  resources:
+    environment_variables:
+      LAB_SUFFIX: "{{ suffix }}"
+
+  init:
+    engine_steps:
+      - id: allocate_session
+        type: engine
+    provider_steps:
+      - id: prepare-gitlab
+        provider_id: gitlab-main
+        type: script
+        script: init/gitlab-prepare.sh
+        timeout_seconds: 300
+
+  instructions:
+    overview_markdown: "instructions/overview.md"
+    steps:
+      - id: step-1
+        title: "Understand Provided CI Config"
+        content_markdown: "instructions/step1.md"
+      - id: step-2
+        title: "Fix the Linting Job"
+        content_markdown: "instructions/step2.md"
+      - id: step-3
+        title: "Add Test Job"
+        content_markdown: "instructions/step3.md"
+      - id: step-4
+        title: "Trigger MR Pipeline"
+        content_markdown: "instructions/step4.md"
+
+    assets:
+      files:
+        - "assets/gitlab-ci-cheatsheet.pdf"
+
+  tasks:
+    - id: fix-lint-job
+      title: "Fix the failing lint job"
+      description: "Update .gitlab-ci.yml so the lint stage passes."
+      weight: 35
+      checks:
+        - check_pipeline_success
+
+    - id: add-test-job
+      title: "Add a test stage to CI"
+      description: "Add a 'test' job that runs pytest and uploads artifacts."
+      depends_on: ["fix-lint-job"]
+      weight: 35
+      checks:
+        - check_test_job_exists
+
+    - id: run-mr-pipeline
+      title: "Trigger MR pipeline"
+      description: "Open an MR and ensure the MR pipeline runs successfully."
+      depends_on: ["add-test-job"]
+      weight: 30
+      checks:
+        - check_mr_pipeline_ok
+
+  scoring:
+    total_score: 100
+    automatic_checks:
+      - id: check_pipeline_success
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies latest pipeline succeeds."
+        config:
+          project_name: "ci-demo"
+          required_pipeline_status: "success"
+
+      - id: check_test_job_exists
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies 'test' job exists in pipeline."
+        config:
+          project_name: "ci-demo"
+          required_job_name: "test"
+
+      - id: check_mr_pipeline_ok
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies MR pipeline runs and passes."
+        config:
+          project_name: "ci-demo"
+          mr_status: "open"
+          required_pipeline_status: "success"
+
+    pass_criteria:
+      min_score: 70
+
+  teardown:
+    engine_steps:
+      - id: close_session
+        type: engine
+    provider_steps:
+      - id: gitlab-cleanup
+        provider_id: gitlab-main
+        type: script
+        script: teardown/gitlab-cleanup.sh
+    policies:
+      on_scoring_failure: force-teardown
+      retention_minutes_after_completion: 0
+
+  security:
+    isolation_level: session-namespace
+    restrict_shell_access: true
+
+  telemetry:
+    metrics:
+      enabled: true
+
+  compatibility:
+    min_engine_version: "1.5.0"
+
+  maintainers_notes:
+    internal_comments: ""
+    change_log: []

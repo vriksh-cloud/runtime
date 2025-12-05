@@ -1,0 +1,230 @@
+apiVersion: labs.vriksh.cloud/v2
+kind: Lab
+
+metadata:
+  id: gitlab-branching-basics
+  slug: gitlab-branching-basics
+  title: "GitLab Branching and Merge Requests"
+  version: "2.0.0"
+  locale: "en-US"
+  labels:
+    domain: devops
+    product: gitlab
+    track: associate
+  owners:
+    - name: "Vriksh Cloud Core Team"
+      email: "labs@vriksh.cloud"
+      org: "Vriksh Cloud"
+      role: author
+  externalRefs:
+    certifications:
+      - "GitLab Certified Associate"
+    vendor_docs:
+      - "https://docs.gitlab.com/ee/user/project/repository/branches/"
+      - "https://docs.gitlab.com/ee/user/project/merge_requests/"
+
+spec:
+  classification:
+    domain: devops
+    subdomain: gitlab
+    difficulty: beginner
+    modality: guided
+    scenario_type: single-tool
+    learning_objectives:
+      - Understand project forking and cloning
+      - Create feature branches using GitLab UI
+      - Commit & push changes
+      - Open Merge Requests and assign reviewers
+      - Understand GitLab branch permissions
+
+  experience:
+    estimated_duration_minutes: 45
+    max_session_minutes: 90
+    allow_retries: true
+    visible_in_catalog: true
+    tenant_visibility:
+      allowed_tenants: []
+      min_plan_tier: free
+
+  prerequisites:
+    required_skills:
+      - Basic understanding of Git terminology
+    required_providers:
+      - gitlab
+
+  parameters:
+    enabled: true
+    static:
+      git_default_branch: "main"
+    dynamic:
+      - name: "suffix"
+        type: string
+        generator: random_string
+        length: 5
+    injection_targets:
+      provider_configs: true
+      environment_variables: true
+      instruction_templates: true
+
+  topology:
+    runtime_profiles:
+      default_profile: small
+      profiles:
+        small:
+          max_concurrent_sessions: 100
+          cost_multiplier: 1.0
+
+    providers:
+      - id: gitlab-main
+        type: gitlab
+        profile: small
+        config:
+          image: "gitlab/gitlab-ee:latest"
+          cpu: 2
+          memory: "4Gi"
+          storage: "20Gi"
+          ingress:
+            enabled: true
+            public_endpoint: true
+          bootstrap_project:
+            enabled: true
+            template: "basic-ci"
+          admin_user:
+            username_template: "root-{{ suffix }}"
+            password_policy:
+              length: 18
+              charset: "alnum-symbol"
+
+  resources:
+    environment_variables:
+      GIT_DEFAULT_BRANCH: "{{ git_default_branch }}"
+    feature_flags:
+      internet_access: false
+
+  init:
+    engine_steps:
+      - id: allocate_session
+        type: engine
+        description: "Allocate session and inject parameters."
+      - id: prepare_dns
+        type: engine
+        description: "Create DNS routing for GitLab instance."
+    provider_steps:
+      - id: gitlab-bootstrap
+        provider_id: gitlab-main
+        type: script
+        script: init/gitlab-bootstrap.sh
+        timeout_seconds: 300
+
+  instructions:
+    overview_markdown: "instructions/overview.md"
+    steps:
+      - id: step-1
+        title: "Explore Repository"
+        content_markdown: "instructions/step1.md"
+        hints:
+          - "Use the left sidebar to find Repository → Files."
+      - id: step-2
+        title: "Create Feature Branch"
+        content_markdown: "instructions/step2.md"
+      - id: step-3
+        title: "Commit a Change"
+        content_markdown: "instructions/step3.md"
+      - id: step-4
+        title: "Open a Merge Request"
+        content_markdown: "instructions/step4.md"
+
+    assets:
+      files:
+        - "assets/git-basics-cheatsheet.pdf"
+
+  tasks:
+    - id: create-branch
+      title: "Create Feature Branch"
+      description: "Create a branch feature-{{ suffix }} from main."
+      depends_on: []
+      weight: 30
+      checks:
+        - check_branch_exists
+
+    - id: commit-change
+      title: "Commit Modification"
+      description: "Create at least one commit on the feature branch."
+      depends_on: ["create-branch"]
+      weight: 30
+      checks:
+        - check_commit_created
+
+    - id: open-mr
+      title: "Create Merge Request"
+      description: "Open an MR from feature branch to main."
+      depends_on: ["commit-change"]
+      weight: 40
+      checks:
+        - check_mr_open
+
+  scoring:
+    total_score: 100
+    automatic_checks:
+      - id: check_branch_exists
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies feature branch exists."
+        config:
+          project_name: "sample-project"
+          branch_name_template: "feature-{{ suffix }}"
+
+      - id: check_commit_created
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies at least one commit on the new branch."
+        config:
+          project_name: "sample-project"
+          branch_name_template: "feature-{{ suffix }}"
+
+      - id: check_mr_open
+        type: gitlab_api
+        provider_id: gitlab-main
+        description: "Verifies MR exists."
+        config:
+          project_name: "sample-project"
+          source_branch_template: "feature-{{ suffix }}"
+          target_branch_env_var: "GIT_DEFAULT_BRANCH"
+
+    pass_criteria:
+      min_score: 70
+      enforce_pass_for_completion: false
+
+  teardown:
+    engine_steps:
+      - id: mark_completed
+        type: engine
+    provider_steps:
+      - id: cleanup
+        provider_id: gitlab-main
+        type: script
+        script: teardown/gitlab-cleanup.sh
+        timeout_seconds: 300
+    policies:
+      on_scoring_failure: force-teardown
+      retention_minutes_after_completion: 0
+
+  security:
+    isolation_level: session-namespace
+    restrict_shell_access: true
+
+  telemetry:
+    metrics:
+      enabled: true
+      collect:
+        - provisioning_latency
+        - scoring_latency
+
+  compatibility:
+    min_engine_version: "1.5.0"
+    required_provider_versions:
+      gitlab: ">=1.2.0,<2.0.0"
+
+  maintainers_notes:
+    internal_comments: ""
+    change_log: []
