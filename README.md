@@ -1,12 +1,12 @@
-# Vriksh Cloud Runtime
+# Vriksh Cloud CLI
 
-> **The Self-Hosted Execution Engine for Vriksh Labs.**
+> **The Command Line Interface for Self-Hosted Vriksh Labs.**
 
-The **Vriksh Cloud Runtime** (`@vriksh/cloud-runtime`) is a standalone CLI tool designed to provision, orchestrate, and score complex technical labs on your local machine. It reads a **Lab Spec v2.0** YAML file and brings up real infrastructure using **Docker** or **Kubernetes**, without requiring an external control plane, SaaS accounts, or internet dependencies (beyond fetching images).
+The **Vriksh Cloud CLI** (`@vriksh/cli`) is a standalone tool designed to provision, orchestrate, and score complex technical labs on your local machine. It reads a **Lab Spec v2.0** YAML file and brings up real infrastructure using **Docker** or **Kubernetes**, without requiring an external control plane, SaaS accounts, or internet dependencies (beyond fetching images).
 
 ---
 
-## Why Vriksh Runtime?
+## Why Vriksh CLI?
 
 *   **Local-First:** No cloud bills, no multi-tenancy, no latency. Everything runs on your localhost.
 *   **Real Infrastructure:** Provisions actual instances of GitLab, Kafka, Postgres, or K8s clusters—not mocks.
@@ -21,7 +21,7 @@ The **Vriksh Cloud Runtime** (`@vriksh/cloud-runtime`) is a standalone CLI tool 
 Ensure you have **Node.js 18+ (LTS)** and **Docker Desktop/Engine** installed.
 
 ```bash
-npm install -g @vriksh/cloud-runtime
+npm install -g @vriksh/cli
 ```
 
 Verify the installation:
