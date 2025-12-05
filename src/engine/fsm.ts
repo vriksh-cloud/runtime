@@ -1,6 +1,9 @@
 import { setup, assign, fromPromise } from 'xstate';
 import { LabSpec } from '../types/lab-spec';
 import { providerRegistry } from '../providers';
+import { stateStore } from '../utils/db';
+import { dockerManager } from '../utils/docker';
+import { scoringEngine } from './scoring';
 
 export interface RunContext {
   runId: string;
@@ -28,7 +31,10 @@ export const labMachine = setup({
   actions: {
     setError: assign({
         error: ({ event }: { event: any }) => {
-            return event.error?.message || event.message || 'Unknown error';
+            const msg = event.error?.message || event.message || 'Unknown error';
+            // We can't easily access runId here if context isn't fully updated, 
+            // but the services log errors themselves usually.
+            return msg;
         }
     }),
     setSpec: assign({
@@ -43,46 +49,64 @@ export const labMachine = setup({
   },
   actors: {
     validateSpec: fromPromise(async () => true),
-    prepareRuntime: fromPromise(async () => {
-      console.log('Checking Docker availability...');
-      // Generate Run ID
-      const runId = `run-${Math.floor(Math.random() * 10000)}`;
+    prepareRuntime: fromPromise(async ({ input }: { input: { spec: LabSpec } }) => {
+      // 1. Check Docker
+      const dockerOk = await dockerManager.checkConnection();
+      if (!dockerOk) throw new Error('Docker is not available. Please start Docker Daemon.');
+
+      // 2. Generate Run ID
+      const runId = `run-${Date.now().toString().slice(-6)}`;
+      
+      // 3. Persist Run
+      stateStore.createRun(runId, input.spec.metadata.id);
+      stateStore.logEvent(runId, 'PREPARE', 'Runtime environment checked.');
+      
       return { runId };
     }),
     provisionResources: fromPromise(async ({ input }: { input: { context: RunContext } }) => {
       const { context } = input;
       if (!context.labSpec) throw new Error('No Lab Spec found');
       
-      console.log(`Provisioning for Run ID: ${context.runId}`);
+      stateStore.updateRunStatus(context.runId, 'PROVISIONING');
       
       const providers = context.labSpec.spec.topology.providers;
       for (const pConfig of providers) {
           const provider = providerRegistry.createProvider(pConfig.type);
           await provider.init(pConfig, context);
       }
+      
+      stateStore.updateRunStatus(context.runId, 'RUNNING');
     }),
-    runInitScripts: fromPromise(async () => {
-      console.log('Running init scripts...');
+    runInitScripts: fromPromise(async ({ input }: { input: { context: RunContext } }) => {
+      stateStore.logEvent(input.context.runId, 'INIT', 'Running initialization scripts...');
       await new Promise(r => setTimeout(r, 500));
     }),
-    runScoring: fromPromise(async () => {
-      console.log('Scoring...');
-      await new Promise(r => setTimeout(r, 800));
+    runScoring: fromPromise(async ({ input }: { input: { context: RunContext } }) => {
+      stateStore.updateRunStatus(input.context.runId, 'SCORING');
+      const score = await scoringEngine.evaluate(input.context.runId);
+      return score;
     }),
     teardownResources: fromPromise(async ({ input }: { input: { context: RunContext } }) => {
-      const { context } = input;
-       if (!context.labSpec) return; // Nothing to teardown
+       const { context } = input;
+       stateStore.updateRunStatus(context.runId, 'TEARDOWN');
        
-       const providers = context.labSpec.spec.topology.providers;
-       // Teardown in reverse order might be better, but simple loop for now
-       for (const pConfig of providers) {
-           try {
-               const provider = providerRegistry.createProvider(pConfig.type);
-               await provider.teardown(context);
-           } catch (e) {
-               console.error(`Failed to teardown ${pConfig.id}`, e);
+       if (context.labSpec) {
+           const providers = context.labSpec.spec.topology.providers;
+           for (const pConfig of providers) {
+               try {
+                   const provider = providerRegistry.createProvider(pConfig.type);
+                   await provider.teardown(context);
+               } catch (e) {
+                   console.error(`Failed to teardown ${pConfig.id}`, e);
+               }
            }
        }
+       
+       // Clean up network
+       await dockerManager.removeNetwork(context.runId);
+       
+       stateStore.updateRunStatus(context.runId, 'COMPLETED');
+       stateStore.logEvent(context.runId, 'COMPLETED', 'Lab execution finished.');
     }),
   },
 }).createMachine({
@@ -112,6 +136,7 @@ export const labMachine = setup({
     prepare: {
       invoke: {
         src: 'prepareRuntime',
+        input: ({ context }) => ({ spec: context.labSpec! }),
         onDone: { 
             target: 'provision',
             actions: 'setRunId'
@@ -130,6 +155,7 @@ export const labMachine = setup({
     init: {
       invoke: {
         src: 'runInitScripts',
+        input: ({ context }) => ({ context }),
         onDone: { target: 'ready' },
         onError: { target: 'teardown', actions: 'setError' },
       },
@@ -143,6 +169,7 @@ export const labMachine = setup({
     scoring: {
       invoke: {
         src: 'runScoring',
+        input: ({ context }) => ({ context }),
         onDone: { target: 'teardown' },
         onError: { target: 'teardown', actions: 'setError' },
       },

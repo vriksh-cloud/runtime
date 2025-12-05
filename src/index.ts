@@ -3,6 +3,8 @@ import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Engine } from './engine';
+import { stateStore } from './utils/db';
+import { dockerManager } from './utils/docker';
 
 const program = new Command();
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
@@ -32,19 +34,50 @@ program
 
 program
   .command('logs')
-  .description('Show or tail logs for the last run')
+  .description('Show logs for the last run')
   .action(() => {
-    console.log('Fetching logs...');
-    // TODO: Implement Engine.logs
+    const lastRun = stateStore.getLastRun() as any;
+    if (!lastRun) {
+        console.log(chalk.yellow('No runs found.'));
+        return;
+    }
+    console.log(chalk.blue(`Logs for Run ID: ${lastRun.id} (${lastRun.status})`));
+    
+    const events = stateStore.getEvents(lastRun.id);
+    events.forEach((e: any) => {
+        console.log(`[${e.timestamp}] [${e.type}] ${e.message}`);
+    });
   });
 
 program
   .command('teardown')
-  .description('Destroy resources for the last (or specified) run')
+  .description('Destroy resources for the last run')
   .option('-i, --id <run-id>', 'Specific run ID')
-  .action((options) => {
-    console.log(chalk.red('Tearing down resources...'));
-    // TODO: Implement Engine.teardown
+  .action(async (options) => {
+    const lastRun = stateStore.getLastRun() as any;
+    const runId = options.id || lastRun?.id;
+    
+    if (!runId) {
+        console.log(chalk.yellow('No active run found to teardown.'));
+        return;
+    }
+
+    console.log(chalk.red(`Tearing down Run ID: ${runId}...`));
+    
+    // We need to reconstruct the teardown logic without the FSM if possible,
+    // or just manually kill the resources found in the DB.
+    
+    const providers = stateStore.getProviders(runId);
+    for (const p of providers) {
+        if (p.resource_id) {
+            console.log(`Stopping ${p.type} container ${p.resource_id}...`);
+            await dockerManager.stopContainer(p.resource_id);
+        }
+    }
+    
+    await dockerManager.removeNetwork(runId);
+    stateStore.updateRunStatus(runId, 'TEARDOWN_FORCED');
+    console.log(chalk.green('Teardown complete.'));
   });
 
 program.parse();
